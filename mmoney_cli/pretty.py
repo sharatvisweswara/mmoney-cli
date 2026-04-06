@@ -132,11 +132,10 @@ def _op(operator: str) -> str:
 
 @register("TransactionRuleV2")
 class TransactionRuleV2Formatter:
-    headers: ClassVar[list[str]] = ["#", "Criteria", "Category", "Merchant", "Review"]
+    headers: ClassVar[list[str]] = ["#", "Criteria", "Category", "Merchant", "Review", "Other"]
 
     def format(self, record: dict[str, Any]) -> TableRow:
         criteria_lines = self._criteria_lines(record)
-        expando = self._expando(record)
 
         cat = record.get("setCategoryAction")
         category_val = f"{cat.get('icon', '')} {cat['name']}".strip() if cat else "—"
@@ -153,14 +152,17 @@ class TransactionRuleV2Formatter:
             dim=not review,
         )
 
+        other_lines = self._other_lines(record)
+
         cells = [
             Cell(str(record.get("order", "")), dim=True),
             Cell("\n".join(criteria_lines) if criteria_lines else "—", bold=True),
             Cell(category_val),
             Cell(merchant_val, dim=not merchant),
             review_cell,
+            Cell("\n".join(other_lines), dim=True),
         ]
-        return TableRow(cells=cells, expando=[expando] if expando.lines else [])
+        return TableRow(cells=cells)
 
     def _criteria_lines(self, r: dict[str, Any]) -> list[str]:
         parts: list[str] = []
@@ -202,60 +204,29 @@ class TransactionRuleV2Formatter:
 
         return parts
 
-    def _action_lines(self, r: dict[str, Any]) -> list[str]:
+    def _other_lines(self, r: dict[str, Any]) -> list[str]:
         parts: list[str] = []
-        cat = r.get("setCategoryAction")
-        if cat:
-            parts.append(f"→ {cat.get('icon', '')} {cat['name']}".strip())
-        merchant = r.get("setMerchantAction")
-        if merchant:
-            name = merchant["name"] if isinstance(merchant, dict) else merchant
-            parts.append(f"→ merchant: {name}")
-        return parts
 
-    def _expando(self, r: dict[str, Any]) -> ExpandoBlock:
-        lines: list[ExpandoLine] = []
-
-        # Tags — each rendered in its own color
         tags = r.get("addTagsAction") or []
         if tags:
-            segs: list[StyledSegment] = [StyledSegment("tags: ", bold=True)]
-            for i, tag in enumerate(tags):
-                if i:
-                    segs.append(StyledSegment(", "))
-                segs.append(StyledSegment(tag["name"], color=_hex_to_click(tag.get("color"))))
-            lines.append(ExpandoLine(segments=segs))
+            parts.append("• " + ", ".join(t["name"] for t in tags))
 
         if r.get("sendNotificationAction"):
-            lines.append(ExpandoLine(segments=[StyledSegment("notify: on", color="cyan")]))
+            parts.append("• notify")
 
         if r.get("setHideFromReportsAction"):
-            lines.append(ExpandoLine(segments=[StyledSegment("hide from reports", dim=True)]))
+            parts.append("• hide from reports")
 
         if r.get("needsReviewByUserAction"):
             user = r["needsReviewByUserAction"]
-            lines.append(
-                ExpandoLine(
-                    segments=[
-                        StyledSegment("needs review by: ", bold=True),
-                        StyledSegment(user.get("displayName", user.get("id", ""))),
-                    ]
-                )
-            )
+            parts.append("• needs review: " + user.get("displayName", user.get("id", "")))
 
         split = r.get("splitTransactionsAction")
         if split:
             n = len(split.get("splitsInfo") or [])
-            lines.append(
-                ExpandoLine(
-                    segments=[
-                        StyledSegment("splits: ", bold=True),
-                        StyledSegment(f"{n} part{'s' if n != 1 else ''}"),
-                    ]
-                )
-            )
+            parts.append(f"• {n} split{'s' if n != 1 else ''}")
 
-        return ExpandoBlock(lines=lines)
+        return parts
 
 
 def _hex_to_click(hex_color: str | None) -> str | None:

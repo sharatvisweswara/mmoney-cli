@@ -128,7 +128,14 @@ def _rule(**overrides):
 
 
 def test_rule_formatter_headers():
-    assert TransactionRuleV2Formatter.headers == ["#", "Criteria", "Category", "Merchant", "Review"]
+    assert TransactionRuleV2Formatter.headers == [
+        "#",
+        "Criteria",
+        "Category",
+        "Merchant",
+        "Review",
+        "Other",
+    ]
 
 
 def test_rule_order_in_first_cell():
@@ -229,7 +236,7 @@ def test_rule_no_actions_shows_dash():
 # ============================================================================
 
 
-def test_rule_tags_in_expando():
+def test_rule_tags_in_other_column():
     fmt = TransactionRuleV2Formatter()
     row = fmt.format(
         _rule(
@@ -249,11 +256,11 @@ def test_rule_tags_in_expando():
             ]
         )
     )
-    assert len(row.expando) == 1
-    tag_line = row.expando[0].lines[0]
-    all_text = "".join(s.text for s in tag_line.segments)
-    assert "Subscription" in all_text
-    assert "Personal" in all_text
+    assert row.expando == []
+    other = row.cells[5].value
+    assert "Subscription" in other
+    assert "Personal" in other
+    assert "•" in other
 
 
 def test_rule_review_status_column():
@@ -269,11 +276,11 @@ def test_rule_no_expando_when_defaults():
     assert row.expando == []
 
 
-def test_rule_notify_in_expando():
+def test_rule_notify_in_other_column():
     fmt = TransactionRuleV2Formatter()
     row = fmt.format(_rule(sendNotificationAction=True))
-    expando_text = " ".join("".join(s.text for s in line.segments) for line in row.expando[0].lines)
-    assert "notify" in expando_text
+    assert row.expando == []
+    assert "notify" in row.cells[5].value
 
 
 # ============================================================================
