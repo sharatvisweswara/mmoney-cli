@@ -323,7 +323,7 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
             continue
         if not row.cells:
             # DefaultFormatter path — no table cells, only expando
-            _render_expando(row.expando, use_color)
+            _render_expando(row.expando, use_color, indent=0)
             continue
 
         # Expand multi-line cell values into sub-lines
@@ -352,14 +352,20 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
                 parts.append(padded)
             click.echo(_COL_GAP.join(parts))
 
-        _render_expando(row.expando, use_color)
+        # Indent expando to align with the last column
+        if col_widths:
+            expando_indent = sum(col_widths[:-1]) + len(_COL_GAP) * (len(col_widths) - 1)
+        else:
+            expando_indent = 0
+        _render_expando(row.expando, use_color, expando_indent)
 
     # ── 4. Footer ─────────────────────────────────────────────────────────────
     if has_headers:
         click.echo(click.style("─" * total_width, dim=True) if use_color else "─" * total_width)
 
 
-def _render_expando(blocks: list[ExpandoBlock], use_color: bool) -> None:
+def _render_expando(blocks: list[ExpandoBlock], use_color: bool, indent: int = 0) -> None:
+    prefix = " " * indent + "┗━ "
     for block in blocks:
         for line in block.lines:
             rendered_segs = []
@@ -370,7 +376,7 @@ def _render_expando(blocks: list[ExpandoBlock], use_color: bool) -> None:
                     )
                 else:
                     rendered_segs.append(seg.text)
-            click.echo(_EXPANDO_PREFIX + "".join(rendered_segs))
+            click.echo(prefix + "".join(rendered_segs))
 
 
 # ============================================================================
