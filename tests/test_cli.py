@@ -751,6 +751,161 @@ class TestCashflowCommands:
 # ============================================================================
 
 
+class TestRulesCommands:
+    """Tests for rules commands."""
+
+    def test_rules_list(self, runner, mock_rules_response):
+        """Test rules list command."""
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_rules = AsyncMock(return_value=mock_rules_response)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(cli, ["-f", "json", "rules", "list"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert len(output["transactionRules"]) == 2
+            assert output["transactionRules"][0]["id"] == "rule_001"
+
+    def test_rules_create_with_category_name(self, runner, mock_categories_response):
+        """Test rules create translates category name to ID."""
+        mock_result = {"createTransactionRuleV2": {"errors": None}}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(
+                return_value=mock_categories_response
+            )
+            mm_instance.create_transaction_rule = AsyncMock(return_value=mock_result)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "rules",
+                    "create",
+                    "--statement",
+                    "NETFLIX",
+                    "--operator",
+                    "contains",
+                    "--category",
+                    "Food & Drink",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mm_instance.create_transaction_rule.assert_called_once_with(
+                original_statement_value="NETFLIX",
+                original_statement_operator="contains",
+                set_category_action="cat_001",
+                set_merchant_action=None,
+                review_status_action=None,
+                apply_to_existing_transactions=False,
+            )
+
+    def test_rules_create_all_actions(self, runner, mock_categories_response):
+        """Test rules create with merchant, review status, and apply-to-existing."""
+        mock_result = {"createTransactionRuleV2": {"errors": None}}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(
+                return_value=mock_categories_response
+            )
+            mm_instance.create_transaction_rule = AsyncMock(return_value=mock_result)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "rules",
+                    "create",
+                    "--statement",
+                    "AMZN MKTP",
+                    "--operator",
+                    "eq",
+                    "--merchant",
+                    "Amazon",
+                    "--review-status",
+                    "reviewed",
+                    "--apply-to-existing",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mm_instance.create_transaction_rule.assert_called_once_with(
+                original_statement_value="AMZN MKTP",
+                original_statement_operator="eq",
+                set_category_action=None,
+                set_merchant_action="Amazon",
+                review_status_action="reviewed",
+                apply_to_existing_transactions=True,
+            )
+
+    def test_rules_create_preview(self, runner, mock_categories_response):
+        """Test rules create --preview calls preview_transaction_rule and does not create."""
+        mock_preview_result = {
+            "transactionRulePreview": {
+                "totalCount": 2,
+                "results": [
+                    {"newName": "Netflix", "transaction": {"id": "t1", "amount": -15.99}},
+                    {"newName": "Netflix", "transaction": {"id": "t2", "amount": -15.99}},
+                ],
+            }
+        }
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(
+                return_value=mock_categories_response
+            )
+            mm_instance.preview_transaction_rule = AsyncMock(return_value=mock_preview_result)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                [
+                    "-f",
+                    "json",
+                    "--allow-mutations",
+                    "rules",
+                    "create",
+                    "--statement",
+                    "NETFLIX",
+                    "--category",
+                    "Food & Drink",
+                    "--preview",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mm_instance.preview_transaction_rule.assert_called_once_with(
+                original_statement_value="NETFLIX",
+                original_statement_operator="contains",
+                set_category_action="cat_001",
+                set_merchant_action=None,
+                review_status_action=None,
+            )
+            mm_instance.create_transaction_rule.assert_not_called()
+            output = json.loads(result.output)
+            assert output["transactionRulePreview"]["totalCount"] == 2
+
+    def test_rules_create_blocked_without_mutations(self, runner):
+        """Test rules create is blocked without --allow-mutations."""
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(cli, ["rules", "create", "--statement", "NETFLIX"])
+
+            assert result.exit_code != 0
+
+
+# ============================================================================
+# Recurring Command Tests
+# ============================================================================
+
+
 class TestRecurringCommands:
     """Tests for recurring commands."""
 

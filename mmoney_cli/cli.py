@@ -1411,6 +1411,96 @@ def rules_list():
     output_result(result)
 
 
+@rules.command("create")
+@click.option("--statement", "-s", required=True, help="Original statement text to match")
+@click.option(
+    "--operator",
+    "-o",
+    type=click.Choice(["eq", "contains"]),
+    default="contains",
+    show_default=True,
+    help="Match operator",
+)
+@click.option("--category", "-c", help="Category name to assign")
+@click.option("--merchant", "-m", help="Merchant name to assign")
+@click.option(
+    "--review-status",
+    "-r",
+    type=click.Choice(["reviewed", "needs_review"]),
+    help="Review status to set",
+)
+@click.option(
+    "--apply-to-existing", is_flag=True, default=False, help="Apply to existing transactions"
+)
+@click.option(
+    "--preview",
+    is_flag=True,
+    default=False,
+    help="Dry-run: show matching transactions without creating the rule",
+)
+@require_mutations
+def rules_create(
+    statement, operator, category, merchant, review_status, apply_to_existing, preview
+):
+    """Create a transaction rule matching on original statement text."""
+    mm = get_client()
+
+    category_id = None
+    if category:
+        cats = run_async(mm.get_transaction_categories())
+        match = next(
+            (c for c in cats.get("categories", []) if c["name"].lower() == category.lower()),
+            None,
+        )
+        if match is None:
+            click.echo(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": ErrorCode.NOT_FOUND,
+                            "message": f"Category '{category}' not found",
+                            "details": "Run 'mmoney categories list' to see available categories.",
+                        }
+                    }
+                ),
+                err=True,
+            )
+            raise SystemExit(ExitCode.NOT_FOUND)
+        category_id = match["id"]
+
+    if preview:
+        result = run_async(
+            mm.preview_transaction_rule(
+                original_statement_value=statement,
+                original_statement_operator=operator,
+                set_category_action=category_id,
+                set_merchant_action=merchant,
+                review_status_action=review_status,
+            )
+        )
+        output_result(result)
+        return
+
+    result = run_async(
+        mm.create_transaction_rule(
+            original_statement_value=statement,
+            original_statement_operator=operator,
+            set_category_action=category_id,
+            set_merchant_action=merchant,
+            review_status_action=review_status,
+            apply_to_existing_transactions=apply_to_existing,
+        )
+    )
+    errors = result.get("createTransactionRuleV2", {}).get("errors")
+    if errors:
+        click.echo(
+            json.dumps({"error": {"code": ErrorCode.API_ERROR, "message": str(errors)}}),
+            err=True,
+        )
+        raise SystemExit(ExitCode.API_ERROR)
+    output_result(result)
+
+
 # ============================================================================
 # Institutions Commands
 # ============================================================================

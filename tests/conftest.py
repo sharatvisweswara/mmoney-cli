@@ -1,8 +1,28 @@
 """Pytest fixtures for mmoney-cli tests."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_keychain():
+    """Prevent all tests from touching the macOS keychain.
+
+    Raises RuntimeError for all keyring calls so no OS dialog is triggered
+    and keychain helpers gracefully return their failure values (None / False).
+    Tests that need specific keyring behaviour can patch mmoney_cli.cli.keyring
+    inside their own with-block, which takes precedence over this fixture.
+    """
+    import keyring as _keyring
+
+    _err = RuntimeError("keychain disabled in tests")
+    with (
+        patch.object(_keyring, "get_password", side_effect=_err),
+        patch.object(_keyring, "set_password", side_effect=_err),
+        patch.object(_keyring, "delete_password", side_effect=_err),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -149,6 +169,31 @@ def mock_subscription_response():
             "status": "active",
             "expiresAt": "2025-01-01",
         }
+    }
+
+
+@pytest.fixture
+def mock_rules_response():
+    """Sample transaction rules response."""
+    return {
+        "transactionRules": [
+            {
+                "id": "rule_001",
+                "order": 0,
+                "originalStatementCriteria": [{"operator": "contains", "value": "netflix"}],
+                "setCategoryAction": {"id": "cat_001", "name": "Food & Drink", "icon": "🍔"},
+                "setMerchantAction": None,
+                "reviewStatusAction": None,
+            },
+            {
+                "id": "rule_002",
+                "order": 1,
+                "originalStatementCriteria": [{"operator": "eq", "value": "AMZN MKTP"}],
+                "setCategoryAction": None,
+                "setMerchantAction": {"id": "mer_001", "name": "Amazon"},
+                "reviewStatusAction": "reviewed",
+            },
+        ]
     }
 
 

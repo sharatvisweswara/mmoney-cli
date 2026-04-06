@@ -1373,3 +1373,105 @@ class TestKeychainStorage:
             assert result.exit_code == 0
             mock_delete.assert_called_once()
             assert "Session deleted" in result.output
+
+
+# ============================================================================
+# Rules Error Tests
+# ============================================================================
+
+
+class TestRulesErrors:
+    """Tests for rules command error handling."""
+
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    @pytest.fixture
+    def mock_categories_response(self):
+        return {
+            "categories": [
+                {"id": "cat_001", "name": "Food & Drink", "icon": "🍔"},
+            ]
+        }
+
+    def test_rules_create_unknown_category(self, runner, mock_categories_response):
+        """Test rules create with a category name that doesn't exist."""
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(
+                return_value=mock_categories_response
+            )
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "rules",
+                    "create",
+                    "--statement",
+                    "NETFLIX",
+                    "--category",
+                    "Nonexistent Category",
+                ],
+            )
+
+            assert result.exit_code == ExitCode.NOT_FOUND
+            error = json.loads(result.output)
+            assert error["error"]["code"] == ErrorCode.NOT_FOUND
+
+    def test_rules_create_category_lookup_case_insensitive(self, runner, mock_categories_response):
+        """Test that category name lookup is case-insensitive."""
+        mock_result = {"createTransactionRuleV2": {"errors": None}}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(
+                return_value=mock_categories_response
+            )
+            mm_instance.create_transaction_rule = AsyncMock(return_value=mock_result)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "rules",
+                    "create",
+                    "--statement",
+                    "NETFLIX",
+                    "--category",
+                    "food & drink",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mm_instance.create_transaction_rule.assert_called_once()
+            call_kwargs = mm_instance.create_transaction_rule.call_args.kwargs
+            assert call_kwargs["set_category_action"] == "cat_001"
+
+    def test_rules_create_api_error(self, runner):
+        """Test rules create surfaces API errors from the mutation response."""
+        mock_result = {
+            "createTransactionRuleV2": {"errors": [{"message": "Invalid input", "code": "INVALID"}]}
+        }
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm_instance = MagicMock()
+            mm_instance.get_transaction_categories = AsyncMock(return_value={"categories": []})
+            mm_instance.create_transaction_rule = AsyncMock(return_value=mock_result)
+            mock_get_client.return_value = mm_instance
+
+            result = runner.invoke(
+                cli,
+                ["--allow-mutations", "rules", "create", "--statement", "NETFLIX"],
+            )
+
+            assert result.exit_code == ExitCode.API_ERROR
+            error = json.loads(result.output)
+            assert error["error"]["code"] == ErrorCode.API_ERROR
+
+    def test_rules_create_missing_statement(self, runner):
+        """Test rules create requires --statement."""
+        with patch("mmoney_cli.cli.get_client"):
+            result = runner.invoke(cli, ["--allow-mutations", "rules", "create"])
+            assert result.exit_code != 0
