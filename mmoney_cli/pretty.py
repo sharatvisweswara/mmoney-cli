@@ -13,6 +13,20 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import click
+from wcwidth import wcswidth
+
+
+def _vlen(s: str) -> int:
+    """Visual (terminal) width of a string, accounting for wide characters like emoji."""
+    w = wcswidth(s)
+    return w if w >= 0 else len(s)  # wcswidth returns -1 for non-printable chars
+
+
+def _vljust(s: str, width: int) -> str:
+    """Left-justify s to visual width, padding with spaces."""
+    pad = width - _vlen(s)
+    return s + " " * max(pad, 0)
+
 
 # ============================================================================
 # Data structures (pure — no I/O)
@@ -268,14 +282,14 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
     has_headers = bool(table.headers)
 
     # ── 1. Compute column widths from unstyled cell values ──────────────────
-    col_widths: list[int] = [len(h) for h in table.headers] if has_headers else []
+    col_widths: list[int] = [_vlen(h) for h in table.headers] if has_headers else []
 
     for row in table.rows:
         for i, cell in enumerate(row.cells):
             if i >= len(col_widths):
                 col_widths.append(0)
             for line in cell.value.split("\n"):
-                visible = len(line)
+                visible = _vlen(line)
                 if cell.max_width:
                     visible = min(visible, cell.max_width)
                 col_widths[i] = max(col_widths[i], visible)
@@ -289,7 +303,7 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
     if has_headers:
         header_parts = []
         for i, h in enumerate(table.headers):
-            padded = h.ljust(col_widths[i])
+            padded = _vljust(h, col_widths[i])
             header_parts.append(click.style(padded, bold=True) if use_color else padded)
         click.echo(_COL_GAP.join(header_parts))
         click.echo(click.style("─" * total_width, dim=True) if use_color else "─" * total_width)
@@ -317,7 +331,7 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
             parts = []
             for i, sublines in enumerate(cell_sublines):
                 text = sublines[sl_idx] if sl_idx < len(sublines) else ""
-                padded = text.ljust(col_widths[i] if i < len(col_widths) else 0)
+                padded = _vljust(text, col_widths[i] if i < len(col_widths) else 0)
                 if use_color:
                     cell = row.cells[i]
                     padded = click.style(

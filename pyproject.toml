@@ -31,6 +31,7 @@ dependencies = [
     "monarchmoneycommunity>=1.1.0",
     "click>=8.0.0",
     "keyring>=24.0.0",
+    "wcwidth>=0.2.0",
 ]
 
 [project.optional-dependencies]
