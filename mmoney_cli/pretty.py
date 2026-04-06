@@ -168,9 +168,16 @@ class TransactionRuleV2Formatter:
 
         other_lines = self._other_lines(record)
 
+        if criteria_lines:
+            criteria_val = "\n".join(
+                ("● " if i == 0 else "┗━ ") + line for i, line in enumerate(criteria_lines)
+            )
+        else:
+            criteria_val = "—"
+
         cells = [
             Cell(str(record.get("order", "")), dim=True),
-            Cell("\n".join(criteria_lines) if criteria_lines else "—", bold=True),
+            Cell(criteria_val, bold=True),
             Cell(category_val),
             Cell(merchant_val, dim=not merchant),
             review_cell,
