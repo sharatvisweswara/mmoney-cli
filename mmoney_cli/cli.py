@@ -18,6 +18,8 @@ import click
 import keyring
 from monarchmoney import MonarchMoney
 
+from mmoney_cli.pretty import output_pretty
+
 T = TypeVar("T")
 
 # Context keys
@@ -175,6 +177,7 @@ class OutputFormat:
     JSONL = "jsonl"
     CSV = "csv"
     TEXT = "text"
+    PRETTY = "pretty"
 
 
 def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
@@ -302,7 +305,7 @@ def output_data(data: Any, format: str = OutputFormat.JSON) -> None:
 
     Args:
         data: Data to output (usually API response dict)
-        format: Output format (json, jsonl, csv, text)
+        format: Output format (json, jsonl, csv, text, pretty)
     """
     if format == OutputFormat.JSONL:
         output_jsonl(data)
@@ -310,6 +313,8 @@ def output_data(data: Any, format: str = OutputFormat.JSON) -> None:
         output_csv(data)
     elif format == OutputFormat.TEXT:
         output_text(data)
+    elif format == OutputFormat.PRETTY:
+        output_pretty(data, use_color=sys.stdout.isatty())
     else:
         output_json(data)
 
@@ -443,9 +448,13 @@ def require_mutations(f: Callable[..., T]) -> Callable[..., T]:
 @click.option(
     "--format",
     "-f",
-    type=click.Choice(["json", "jsonl", "csv", "text"]),
-    default="text",
-    help="Output format: text (default, key=value), json, jsonl (streaming), csv (tabular).",
+    type=click.Choice(["json", "jsonl", "csv", "text", "pretty"]),
+    default=None,
+    help=(
+        "Output format. Defaults to 'pretty' when stdout is a TTY, 'json' otherwise. "
+        "text: key=value pairs; json: pretty JSON; jsonl: streaming; csv: tabular; "
+        "pretty: human-readable with color."
+    ),
 )
 @click.pass_context
 def cli(ctx, allow_mutations, format):
@@ -461,13 +470,16 @@ def cli(ctx, allow_mutations, format):
 
     \b
     OUTPUT FORMATS:
-    - text: Key=value pairs (default, simple extraction, grep/awk)
-    - json: Pretty-printed JSON (nested data, backward compatible)
-    - jsonl: One JSON object per line (streaming, line processing)
-    - csv: Comma-separated values (tabular data, spreadsheets)
+    - pretty: Human-readable with color (default when stdout is a TTY)
+    - json:   Pretty-printed JSON (default when piped — agent/script friendly)
+    - text:   Key=value pairs (grep/awk)
+    - jsonl:  One JSON object per line (streaming)
+    - csv:    Comma-separated values (spreadsheets)
     """
     ctx.ensure_object(dict)
     ctx.obj[_ALLOW_MUTATIONS] = allow_mutations
+    if format is None:
+        format = OutputFormat.PRETTY if sys.stdout.isatty() else OutputFormat.JSON
     ctx.obj[_OUTPUT_FORMAT] = format
 
 
