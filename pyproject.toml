@@ -80,6 +80,9 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["mmoney_cli"]
 
+[tool.uv.sources]
+monarchmoneycommunity = { path = "vendor/monarchmoneycommunity", editable = true }
+
 [tool.vulture]
 min_confidence = 80
 paths = ["mmoney_cli"]

@@ -214,6 +214,7 @@ def _extract_records(data: Any) -> list[dict[str, Any]]:
             "credentials",
             "budgetData",
             "recurringTransactions",
+            "transactionRules",
             "splits",
             "snapshots",
             "history",
@@ -1388,6 +1389,25 @@ def recurring_list(start_date, end_date):
     """List recurring transactions."""
     mm = get_client()
     result = run_async(mm.get_recurring_transactions(start_date=start_date, end_date=end_date))
+    output_result(result)
+
+
+# ============================================================================
+# Rules Commands
+# ============================================================================
+
+
+@cli.group()
+def rules():
+    """Transaction rules."""
+    pass
+
+
+@rules.command("list")
+def rules_list():
+    """List transaction rules."""
+    mm = get_client()
+    result = run_async(mm.get_transaction_rules())
     output_result(result)
 
 

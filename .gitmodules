@@ -1,0 +1,3 @@
+[submodule "vendor/monarchmoneycommunity"]
+	path = vendor/monarchmoneycommunity
+	url = https://github.com/sharatvisweswara/monarchmoneycommunity
