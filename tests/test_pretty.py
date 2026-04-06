@@ -258,9 +258,7 @@ def test_rule_tags_in_other_column():
     )
     assert row.expando == []
     other = row.cells[5].value
-    assert "Subscription" in other
-    assert "Personal" in other
-    assert "•" in other
+    assert "• tags: Subscription, Personal" in other
 
 
 def test_rule_review_status_column():
@@ -280,7 +278,7 @@ def test_rule_notify_in_other_column():
     fmt = TransactionRuleV2Formatter()
     row = fmt.format(_rule(sendNotificationAction=True))
     assert row.expando == []
-    assert "notify" in row.cells[5].value
+    assert "• notify: true" in row.cells[5].value
 
 
 # ============================================================================

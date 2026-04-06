@@ -209,22 +209,26 @@ class TransactionRuleV2Formatter:
 
         tags = r.get("addTagsAction") or []
         if tags:
-            parts.append("• " + ", ".join(t["name"] for t in tags))
+            parts.append("• tags: " + ", ".join(t["name"] for t in tags))
 
         if r.get("sendNotificationAction"):
-            parts.append("• notify")
+            parts.append("• notify: true")
 
         if r.get("setHideFromReportsAction"):
-            parts.append("• hide from reports")
+            parts.append("• hide: true")
 
         if r.get("needsReviewByUserAction"):
             user = r["needsReviewByUserAction"]
             parts.append("• needs review: " + user.get("displayName", user.get("id", "")))
 
+        goal = r.get("linkGoalAction") or r.get("linkSavingsGoalAction")
+        if goal:
+            parts.append("• goal: " + goal["name"])
+
         split = r.get("splitTransactionsAction")
         if split:
             n = len(split.get("splitsInfo") or [])
-            parts.append(f"• {n} split{'s' if n != 1 else ''}")
+            parts.append(f"• splits: {n}")
 
         return parts
 
