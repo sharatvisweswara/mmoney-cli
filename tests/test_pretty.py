@@ -128,7 +128,7 @@ def _rule(**overrides):
 
 
 def test_rule_formatter_headers():
-    assert TransactionRuleV2Formatter.headers == ["#", "Criteria", "Actions"]
+    assert TransactionRuleV2Formatter.headers == ["#", "Criteria", "Category", "Merchant", "Review"]
 
 
 def test_rule_order_in_first_cell():
@@ -205,7 +205,7 @@ def test_rule_set_category_action():
             }
         )
     )
-    assert "Food & Drink" in row.cells[2].value
+    assert "Food & Drink" in row.cells[2].value  # Category column
 
 
 def test_rule_set_merchant_action():
@@ -213,13 +213,15 @@ def test_rule_set_merchant_action():
     row = fmt.format(
         _rule(setMerchantAction={"id": "m1", "name": "Netflix", "__typename": "Merchant"})
     )
-    assert "Netflix" in row.cells[2].value
+    assert "Netflix" in row.cells[3].value  # Merchant column
 
 
 def test_rule_no_actions_shows_dash():
     fmt = TransactionRuleV2Formatter()
     row = fmt.format(_rule())
-    assert row.cells[2].value == "—"
+    assert row.cells[2].value == "—"  # Category
+    assert row.cells[3].value == "—"  # Merchant
+    assert row.cells[4].value == "—"  # Review
 
 
 # ============================================================================
@@ -254,11 +256,11 @@ def test_rule_tags_in_expando():
     assert "Personal" in all_text
 
 
-def test_rule_review_status_in_expando():
+def test_rule_review_status_column():
     fmt = TransactionRuleV2Formatter()
     row = fmt.format(_rule(reviewStatusAction="reviewed"))
-    expando_text = " ".join("".join(s.text for s in line.segments) for line in row.expando[0].lines)
-    assert "reviewed" in expando_text
+    assert row.cells[4].value == "reviewed"
+    assert row.cells[4].color == "green"
 
 
 def test_rule_no_expando_when_defaults():

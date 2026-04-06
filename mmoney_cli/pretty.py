@@ -132,17 +132,33 @@ def _op(operator: str) -> str:
 
 @register("TransactionRuleV2")
 class TransactionRuleV2Formatter:
-    headers: ClassVar[list[str]] = ["#", "Criteria", "Actions"]
+    headers: ClassVar[list[str]] = ["#", "Criteria", "Category", "Merchant", "Review"]
 
     def format(self, record: dict[str, Any]) -> TableRow:
         criteria_lines = self._criteria_lines(record)
-        action_lines = self._action_lines(record)
         expando = self._expando(record)
+
+        cat = record.get("setCategoryAction")
+        category_val = f"{cat.get('icon', '')} {cat['name']}".strip() if cat else "—"
+
+        merchant = record.get("setMerchantAction")
+        merchant_val = (
+            (merchant["name"] if isinstance(merchant, dict) else merchant) if merchant else "—"
+        )
+
+        review = record.get("reviewStatusAction")
+        review_cell = Cell(
+            review if review else "—",
+            color="green" if review == "reviewed" else ("yellow" if review else None),
+            dim=not review,
+        )
 
         cells = [
             Cell(str(record.get("order", "")), dim=True),
             Cell("\n".join(criteria_lines) if criteria_lines else "—", bold=True),
-            Cell("\n".join(action_lines) if action_lines else "—"),
+            Cell(category_val),
+            Cell(merchant_val, dim=not merchant),
+            review_cell,
         ]
         return TableRow(cells=cells, expando=[expando] if expando.lines else [])
 
@@ -209,20 +225,6 @@ class TransactionRuleV2Formatter:
                     segs.append(StyledSegment(", "))
                 segs.append(StyledSegment(tag["name"], color=_hex_to_click(tag.get("color"))))
             lines.append(ExpandoLine(segments=segs))
-
-        review = r.get("reviewStatusAction")
-        if review:
-            lines.append(
-                ExpandoLine(
-                    segments=[
-                        StyledSegment("review: ", bold=True),
-                        StyledSegment(
-                            review,
-                            color="green" if review == "reviewed" else "yellow",
-                        ),
-                    ]
-                )
-            )
 
         if r.get("sendNotificationAction"):
             lines.append(ExpandoLine(segments=[StyledSegment("notify: on", color="cyan")]))
