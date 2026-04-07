@@ -66,6 +66,7 @@ class Cell:
     bold: bool = False
     dim: bool = False
     max_width: int | None = None  # truncate with "…" if exceeded
+    min_width: int | None = None  # pad column to at least this width
 
 
 @dataclass
@@ -254,6 +255,75 @@ class TransactionRuleV2Formatter:
         return parts
 
 
+# ============================================================================
+# Transaction formatter
+# ============================================================================
+
+
+@register("Transaction")
+class TransactionFormatter:
+    headers: ClassVar[list[str]] = [
+        "Date",
+        "Amount",
+        "Merchant",
+        "Original",
+        "Category",
+        "Account",
+        "Other",
+    ]
+
+    def format(self, record: dict[str, Any]) -> TableRow:
+        date = record.get("date", "") or ""
+
+        amount = record.get("amount") or 0
+        if amount < 0:
+            amount_str = f"-${abs(amount):,.2f}"
+            amount_color: str | None = "red"
+        else:
+            amount_str = f"${amount:,.2f}"
+            amount_color = "green"
+
+        plaid_name = record.get("plaidName") or ""
+
+        merchant = record.get("merchant") or {}
+        merchant_name = merchant.get("name", "") if isinstance(merchant, dict) else str(merchant)
+
+        category = record.get("category") or {}
+        category_name = category.get("name", "") if isinstance(category, dict) else str(category)
+
+        account = record.get("account") or {}
+        account_name = account.get("displayName", "") if isinstance(account, dict) else str(account)
+
+        other_parts: list[str] = []
+        if record.get("pending"):
+            other_parts.append("pending")
+        review = record.get("reviewStatus")
+        if review and review != "reviewed":
+            other_parts.append(f"review: {review}")
+        if record.get("isRecurring"):
+            other_parts.append("recurring")
+        tags = record.get("tags") or []
+        if tags:
+            other_parts.append("tags: " + ", ".join(t["name"] for t in tags))
+        notes = record.get("notes")
+        if notes:
+            other_parts.append(f"note: {notes}")
+        if record.get("isSplitTransaction"):
+            other_parts.append("split")
+
+        return TableRow(
+            cells=[
+                Cell(date),
+                Cell(amount_str, color=amount_color),
+                Cell(merchant_name or "—", dim=not merchant_name),
+                Cell(plaid_name, dim=True, min_width=20),
+                Cell(category_name or "—", dim=not category_name),
+                Cell(account_name or "—", dim=not account_name),
+                Cell("\n".join(other_parts), dim=True),
+            ]
+        )
+
+
 def _hex_to_click(hex_color: str | None) -> str | None:
     """Return a click-compatible color name for common hex values, else None."""
     if not hex_color:
@@ -295,6 +365,8 @@ def render_table(table: RenderTable, use_color: bool = True) -> None:
         for i, cell in enumerate(row.cells):
             if i >= len(col_widths):
                 col_widths.append(0)
+            if cell.min_width:
+                col_widths[i] = max(col_widths[i], cell.min_width)
             for line in cell.value.split("\n"):
                 visible = _vlen(line)
                 if cell.max_width:

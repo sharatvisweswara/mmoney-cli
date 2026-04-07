@@ -10,6 +10,7 @@ from mmoney_cli.pretty import (
     RenderTable,
     StyledSegment,
     TableRow,
+    TransactionFormatter,
     TransactionRuleV2Formatter,
     _extract_records,
     _truncate,
@@ -436,6 +437,127 @@ def test_output_pretty_transaction_rules(capsys):
     assert "netflix" in captured
     assert "Entertainment" in captured
     assert "Criteria" in captured
+
+
+# ============================================================================
+# TransactionFormatter
+# ============================================================================
+
+_BASE_TXN: dict = {
+    "__typename": "Transaction",
+    "id": "txn_001",
+    "date": "2024-01-15",
+    "amount": -50.0,
+    "pending": False,
+    "plaidName": "COFFEE SHOP",
+    "notes": None,
+    "isRecurring": False,
+    "reviewStatus": None,
+    "needsReview": False,
+    "isSplitTransaction": False,
+    "merchant": {"id": "m1", "name": "Coffee Shop"},
+    "category": {"id": "c1", "name": "Food & Drink"},
+    "account": {"id": "a1", "displayName": "Checking (...1234)"},
+    "tags": [],
+}
+
+
+def _txn(**overrides):
+    return {**_BASE_TXN, **overrides}
+
+
+def test_transaction_formatter_headers():
+    assert TransactionFormatter.headers == [
+        "Date",
+        "Amount",
+        "Merchant",
+        "Original",
+        "Category",
+        "Account",
+        "Other",
+    ]
+
+
+def test_transaction_formatter_date():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn())
+    assert row.cells[0].value == "2024-01-15"
+
+
+def test_transaction_formatter_expense_red():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(amount=-50.0))
+    assert row.cells[1].value == "-$50.00"
+    assert row.cells[1].color == "red"
+
+
+def test_transaction_formatter_income_green():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(amount=1500.0))
+    assert row.cells[1].value == "$1,500.00"
+    assert row.cells[1].color == "green"
+
+
+def test_transaction_formatter_merchant():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn())
+    assert row.cells[2].value == "Coffee Shop"
+    assert not row.cells[2].dim
+
+
+def test_transaction_formatter_merchant_missing():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(merchant=None))
+    assert row.cells[2].value == "—"
+    assert row.cells[2].dim
+
+
+def test_transaction_formatter_category():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn())
+    assert row.cells[4].value == "Food & Drink"
+
+
+def test_transaction_formatter_account():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn())
+    assert row.cells[5].value == "Checking (...1234)"
+
+
+def test_transaction_formatter_no_other_when_clean():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn())
+    assert row.cells[6].value == ""
+
+
+def test_transaction_formatter_pending():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(pending=True))
+    assert "pending" in row.cells[6].value
+
+
+def test_transaction_formatter_recurring():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(isRecurring=True))
+    assert "recurring" in row.cells[6].value
+
+
+def test_transaction_formatter_tags():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(tags=[{"id": "t1", "name": "Business"}, {"id": "t2", "name": "Travel"}]))
+    assert "tags: Business, Travel" in row.cells[6].value
+
+
+def test_transaction_formatter_notes():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(notes="split with partner"))
+    assert "note: split with partner" in row.cells[6].value
+
+
+def test_transaction_formatter_split():
+    fmt = TransactionFormatter()
+    row = fmt.format(_txn(isSplitTransaction=True))
+    assert "split" in row.cells[6].value
 
 
 def test_output_pretty_empty_data(capsys):

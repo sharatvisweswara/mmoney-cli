@@ -1061,10 +1061,22 @@ def transactions():
 @click.option("--category-id", "-c", multiple=True, help="Filter by category ID")
 @click.option("--account-id", "-a", multiple=True, help="Filter by account ID")
 @click.option("--tag-id", "-t", multiple=True, help="Filter by tag ID")
+@click.option("--merchant-id", "-m", multiple=True, help="Filter by merchant ID")
 @click.option("--has-attachments", type=bool, help="Filter by attachment presence")
 @click.option("--has-notes", type=bool, help="Filter by notes presence")
 @click.option("--is-split", type=bool, help="Filter split transactions")
 @click.option("--is-recurring", type=bool, help="Filter recurring transactions")
+@click.option("--needs-review", type=bool, help="Filter by needs review status")
+@click.option(
+    "--needs-review-unassigned", type=bool, help="Filter for unassigned needs-review transactions"
+)
+@click.option(
+    "--visibility",
+    type=click.Choice(
+        ["non_hidden_transactions_only", "hidden_transactions_only", "all_transactions"]
+    ),
+    help="Filter by transaction visibility",
+)
 def transactions_list(
     limit,
     offset,
@@ -1074,10 +1086,14 @@ def transactions_list(
     category_id,
     account_id,
     tag_id,
+    merchant_id,
     has_attachments,
     has_notes,
     is_split,
     is_recurring,
+    needs_review,
+    needs_review_unassigned,
+    visibility,
 ):
     """List transactions."""
     mm = get_client()
@@ -1091,10 +1107,14 @@ def transactions_list(
             category_ids=list(category_id),
             account_ids=list(account_id),
             tag_ids=list(tag_id),
+            merchant_ids=list(merchant_id),
             has_attachments=has_attachments,
             has_notes=has_notes,
             is_split=is_split,
             is_recurring=is_recurring,
+            needs_review=needs_review,
+            needs_review_unassigned=needs_review_unassigned,
+            transaction_visibility=visibility,
         )
     )
     output_result(result)
