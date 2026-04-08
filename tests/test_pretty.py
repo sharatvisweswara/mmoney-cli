@@ -7,6 +7,7 @@ from mmoney_cli.pretty import (
     DefaultFormatter,
     ExpandoBlock,
     ExpandoLine,
+    PrivacyScanGroupFormatter,
     RenderTable,
     StyledSegment,
     TableRow,
@@ -571,3 +572,105 @@ def test_output_pretty_unknown_typename(capsys):
     captured = capsys.readouterr().out
     assert "foo" in captured
     assert "bar" in captured
+
+
+# ============================================================================
+# PrivacyScanGroupFormatter
+# ============================================================================
+
+
+def test_privacy_scan_group_formatter_headers():
+    assert PrivacyScanGroupFormatter.headers == [
+        "Merchant Fragment",
+        "Count",
+        "Amount",
+        "Merchant",
+        "Status",
+        "Rule",
+    ]
+
+
+def test_privacy_scan_group_needs_rule():
+    fmt = PrivacyScanGroupFormatter()
+    row = fmt.format(
+        {
+            "__typename": "PrivacyScanGroup",
+            "canonical": "sprouts far",
+            "transaction_count": 3,
+            "total_amount": -80.45,
+            "status": "needs_rule",
+            "matching_rules": [],
+            "suggested_merchant": "Sprouts",
+            "merchant_descriptor": "SPROUTS FARMERS MARKET",
+            "suggested_command": 'mmoney --allow-mutations privacy rule -s "sprouts far" -m "Sprouts"',
+        }
+    )
+    assert row.cells[0].value == "sprouts far"
+    assert row.cells[1].value == "3"
+    assert "Sprouts" in row.cells[3].value  # Merchant column
+    assert row.cells[4].value == "new"
+    assert row.cells[4].color == "red"
+    assert row.cells[5].value == "—"
+    assert len(row.expando) == 1  # suggested command
+
+
+def test_privacy_scan_group_covered():
+    fmt = PrivacyScanGroupFormatter()
+    row = fmt.format(
+        {
+            "__typename": "PrivacyScanGroup",
+            "canonical": "anthropic",
+            "transaction_count": 1,
+            "total_amount": -20.0,
+            "status": "covered",
+            "matching_rules": [{"order": 9, "match_type": "covers", "merchant": "Anthropic"}],
+            "suggested_merchant": None,
+            "merchant_descriptor": None,
+            "suggested_command": None,
+        }
+    )
+    assert row.cells[4].value == "covered"
+    assert row.cells[4].color == "green"
+    assert "#9 → Anthropic" in row.cells[5].value
+    assert row.expando == []
+
+
+def test_privacy_scan_group_partial():
+    fmt = PrivacyScanGroupFormatter()
+    row = fmt.format(
+        {
+            "__typename": "PrivacyScanGroup",
+            "canonical": "google*yout",
+            "transaction_count": 4,
+            "total_amount": -55.96,
+            "status": "partial",
+            "matching_rules": [{"order": 12, "match_type": "partial", "merchant": "Google Cloud"}],
+            "suggested_merchant": None,
+            "merchant_descriptor": None,
+            "suggested_command": 'mmoney --allow-mutations privacy rule -s "google*yout" -m "<NAME>"',
+        }
+    )
+    assert row.cells[4].value == "partial"
+    assert row.cells[4].color == "yellow"
+    assert "#12 → Google Cloud" in row.cells[5].value
+    assert len(row.expando) == 1
+
+
+def test_privacy_scan_group_merchant_with_descriptor():
+    """When card memo and descriptor differ, show both."""
+    fmt = PrivacyScanGroupFormatter()
+    row = fmt.format(
+        {
+            "__typename": "PrivacyScanGroup",
+            "canonical": "sprouts far",
+            "transaction_count": 1,
+            "total_amount": -42.30,
+            "status": "needs_rule",
+            "matching_rules": [],
+            "suggested_merchant": "Sprouts",
+            "merchant_descriptor": "SPROUTS FARMERS MARKET",
+            "suggested_command": 'mmoney --allow-mutations privacy rule -s "sprouts far" -m "Sprouts"',
+        }
+    )
+    assert "Sprouts" in row.cells[3].value
+    assert "SPROUTS FARMERS MARKET" in row.cells[3].value

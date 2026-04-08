@@ -324,6 +324,82 @@ class TransactionFormatter:
         )
 
 
+# ============================================================================
+# PrivacyScanGroup formatter
+# ============================================================================
+
+
+@register("PrivacyScanGroup")
+class PrivacyScanGroupFormatter:
+    headers: ClassVar[list[str]] = [
+        "Merchant Fragment",
+        "Count",
+        "Amount",
+        "Merchant",
+        "Status",
+        "Rule",
+    ]
+
+    def format(self, record: dict[str, Any]) -> TableRow:
+        canonical = record.get("canonical", "")
+        count = record.get("transaction_count", 0)
+        total = record.get("total_amount", 0)
+        status = record.get("status", "needs_rule")
+        matching = record.get("matching_rules") or []
+
+        amount_str = f"-${abs(total):,.2f}" if total < 0 else f"${total:,.2f}"
+
+        # Merchant name from Privacy.com enrichment
+        suggested_merchant = record.get("suggested_merchant") or ""
+        descriptor = record.get("merchant_descriptor") or ""
+        # Show card memo, and descriptor in parentheses if different
+        if suggested_merchant and descriptor and descriptor.lower() != suggested_merchant.lower():
+            merchant_val = f"{suggested_merchant} ({descriptor})"
+        elif suggested_merchant:
+            merchant_val = suggested_merchant
+        elif descriptor:
+            merchant_val = descriptor
+        else:
+            merchant_val = ""
+
+        status_color: str | None = None
+        if status == "needs_rule":
+            status_label = "new"
+            status_color = "red"
+        elif status == "covered":
+            status_label = "covered"
+            status_color = "green"
+        else:
+            status_label = "partial"
+            status_color = "yellow"
+
+        rule_parts: list[str] = []
+        for rm in matching:
+            order = rm.get("order", "?")
+            merchant = rm.get("merchant", "")
+            rule_parts.append(f"#{order} → {merchant}")
+        rule_val = ", ".join(rule_parts) if rule_parts else "—"
+
+        suggested = record.get("suggested_command")
+        expando: list[ExpandoBlock] = []
+        if suggested:
+            expando.append(
+                ExpandoBlock(lines=[ExpandoLine(segments=[StyledSegment(suggested, dim=True)])])
+            )
+
+        return TableRow(
+            cells=[
+                Cell(canonical, bold=True, min_width=16),
+                Cell(str(count)),
+                Cell(amount_str),
+                Cell(merchant_val, dim=not merchant_val),
+                Cell(status_label, color=status_color),
+                Cell(rule_val, dim=not matching),
+            ],
+            expando=expando,
+        )
+
+
 def _hex_to_click(hex_color: str | None) -> str | None:
     """Return a click-compatible color name for common hex values, else None."""
     if not hex_color:

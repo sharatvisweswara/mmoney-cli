@@ -1259,3 +1259,225 @@ class TestCLIBasics:
         assert "create" in result.output
         assert "update" in result.output
         assert "delete" in result.output
+
+
+# ============================================================================
+# Privacy Command Tests
+# ============================================================================
+
+
+class TestPrivacyCommands:
+    """Tests for privacy commands."""
+
+    def test_privacy_scan(self, runner):
+        """Test privacy scan finds, groups, and enriches transactions."""
+        txns_response = {
+            "allTransactions": {
+                "totalCount": 3,
+                "results": [
+                    {
+                        "__typename": "Transaction",
+                        "id": "t1",
+                        "plaidName": "PwP  SPROUTS FAR Privacycom",
+                        "amount": -42.30,
+                        "date": "2026-04-01",
+                    },
+                    {
+                        "__typename": "Transaction",
+                        "id": "t2",
+                        "plaidName": "PwP  SPROUTS FAR Privacycom",
+                        "amount": -38.15,
+                        "date": "2026-03-28",
+                    },
+                    {
+                        "__typename": "Transaction",
+                        "id": "t3",
+                        "plaidName": "PwP  GOOGLE*YOUT Privacycom",
+                        "amount": -13.99,
+                        "date": "2026-04-02",
+                    },
+                ],
+            }
+        }
+        rules_response = {"transactionRules": []}
+        mock_pc = MagicMock()
+
+        def mock_get_all_txns(**kwargs):
+            # Return matching Privacy txns based on what's in the window
+            return [
+                {
+                    "card_token": "card-sprouts",
+                    "settled_amount": 4230,
+                    "merchant": {"descriptor": "SPROUTS FARMERS MARKET"},
+                },
+                {
+                    "card_token": "card-yt",
+                    "settled_amount": 1399,
+                    "merchant": {"descriptor": "GOOGLE *YOUTUBE PREMIUM"},
+                },
+            ]
+
+        mock_pc.get_all_transactions.side_effect = mock_get_all_txns
+        mock_pc.get_card.side_effect = lambda t: {
+            "card-sprouts": {"memo": "Sprouts", "type": "MERCHANT_LOCKED"},
+            "card-yt": {"memo": "YouTube", "type": "MERCHANT_LOCKED"},
+        }.get(t, {})
+        with (
+            patch("mmoney_cli.cli.get_client") as mock_get_client,
+            patch("mmoney_cli.cli.PrivacyClient", return_value=mock_pc),
+        ):
+            mm = MagicMock()
+            mm.get_transactions = AsyncMock(return_value=txns_response)
+            mm.get_transaction_rules = AsyncMock(return_value=rules_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(cli, ["-f", "json", "privacy", "scan"])
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert len(output) == 2
+            sprouts = next(g for g in output if "sprouts" in g["canonical"])
+            assert sprouts["suggested_merchant"] == "Sprouts"
+            assert sprouts["merchant_descriptor"] == "SPROUTS FARMERS MARKET"
+            assert '-m "Sprouts"' in sprouts["suggested_command"]
+
+    def test_privacy_scan_no_transactions(self, runner):
+        """Test privacy scan with no unreviewed transactions."""
+        txns_response = {"allTransactions": {"totalCount": 0, "results": []}}
+        rules_response = {"transactionRules": []}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm = MagicMock()
+            mm.get_transaction_rules = AsyncMock(return_value=rules_response)
+            mm.get_transactions = AsyncMock(return_value=txns_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(cli, ["-f", "json", "privacy", "scan"])
+            assert result.exit_code == 0
+            assert "No unreviewed Privacy.com transactions found" in result.output
+
+    def test_privacy_scan_missing_api_key(self, runner):
+        """Test privacy scan fails with helpful message when API key is missing."""
+        txns_response = {
+            "allTransactions": {
+                "totalCount": 1,
+                "results": [
+                    {
+                        "__typename": "Transaction",
+                        "id": "t1",
+                        "plaidName": "PwP  TEST Privacycom",
+                        "amount": -10.0,
+                    }
+                ],
+            }
+        }
+        rules_response = {"transactionRules": []}
+        with (
+            patch("mmoney_cli.cli.get_client") as mock_get_client,
+            patch("mmoney_cli.cli.PrivacyClient", side_effect=ValueError("No Privacy.com API key")),
+        ):
+            mm = MagicMock()
+            mm.get_transaction_rules = AsyncMock(return_value=rules_response)
+            mm.get_transactions = AsyncMock(return_value=txns_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(cli, ["-f", "json", "privacy", "scan"])
+            assert result.exit_code == 2  # AUTH_ERROR
+            assert "mmoney privacy auth" in result.output
+
+    def test_privacy_rule_create(self, runner):
+        """Test privacy rule creates with correct defaults."""
+        cats_response = {"categories": [{"id": "cat_1", "name": "Groceries", "icon": "🥕"}]}
+        create_response = {"createTransactionRuleV2": {"errors": None}}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm = MagicMock()
+            mm.get_transaction_categories = AsyncMock(return_value=cats_response)
+            mm.create_transaction_rule = AsyncMock(return_value=create_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "-f",
+                    "json",
+                    "privacy",
+                    "rule",
+                    "-s",
+                    "SPROUTS FAR",
+                    "-m",
+                    "Sprouts",
+                    "-c",
+                    "Groceries",
+                ],
+            )
+            assert result.exit_code == 0
+            mm.create_transaction_rule.assert_called_once()
+            call_kwargs = mm.create_transaction_rule.call_args[1]
+            # Statement should be lowercased
+            assert call_kwargs["original_statement_value"] == "sprouts far"
+            # merchantNameCriteria should be set to "privacy"
+            assert call_kwargs["merchant_name_value"] == "privacy"
+            # Review status defaults to "reviewed"
+            assert call_kwargs["review_status_action"] == "reviewed"
+            # Apply to existing defaults to True
+            assert call_kwargs["apply_to_existing_transactions"] is True
+
+    def test_privacy_rule_preview(self, runner):
+        """Test privacy rule preview mode."""
+        preview_response = {"previewTransactionRule": {"totalCount": 3, "results": []}}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm = MagicMock()
+            mm.preview_transaction_rule = AsyncMock(return_value=preview_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "-f",
+                    "json",
+                    "privacy",
+                    "rule",
+                    "-s",
+                    "sprouts far",
+                    "-m",
+                    "Sprouts",
+                    "--preview",
+                ],
+            )
+            assert result.exit_code == 0
+            mm.preview_transaction_rule.assert_called_once()
+            # create should NOT be called
+            assert (
+                not hasattr(mm, "create_transaction_rule") or not mm.create_transaction_rule.called
+            )
+
+    def test_privacy_rule_blocked_without_mutations(self, runner):
+        """Test privacy rule requires --allow-mutations."""
+        result = runner.invoke(cli, ["-f", "json", "privacy", "rule", "-s", "test", "-m", "Test"])
+        assert result.exit_code != 0
+
+    def test_privacy_rule_unknown_category(self, runner):
+        """Test privacy rule with unknown category."""
+        cats_response = {"categories": [{"id": "cat_1", "name": "Groceries", "icon": "🥕"}]}
+        with patch("mmoney_cli.cli.get_client") as mock_get_client:
+            mm = MagicMock()
+            mm.get_transaction_categories = AsyncMock(return_value=cats_response)
+            mock_get_client.return_value = mm
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--allow-mutations",
+                    "-f",
+                    "json",
+                    "privacy",
+                    "rule",
+                    "-s",
+                    "test",
+                    "-m",
+                    "Test",
+                    "-c",
+                    "Nonexistent",
+                ],
+            )
+            assert result.exit_code == 3  # NOT_FOUND

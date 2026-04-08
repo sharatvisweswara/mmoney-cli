@@ -1,3 +1,6 @@
 [submodule "vendor/monarchmoneycommunity"]
 	path = vendor/monarchmoneycommunity
 	url = https://github.com/sharatvisweswara/monarchmoneycommunity
+[submodule "vendor/privacy-python"]
+	path = vendor/privacy-python
+	url = ./vendor/privacy-python

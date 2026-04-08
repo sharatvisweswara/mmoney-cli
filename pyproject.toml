@@ -29,6 +29,7 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = [
     "monarchmoneycommunity>=1.1.0",
+    "privacy-python>=0.1.0",
     "click>=8.0.0",
     "keyring>=24.0.0",
     "wcwidth>=0.2.0",
@@ -43,6 +44,7 @@ dev = [
     "pre-commit>=4.0.0",
     "detect-secrets>=1.5.0",
     "pyright>=1.1.0",
+    "responses>=0.23.0",
 ]
 
 [project.scripts]
@@ -83,6 +85,7 @@ known-first-party = ["mmoney_cli"]
 
 [tool.uv.sources]
 monarchmoneycommunity = { path = "vendor/monarchmoneycommunity", editable = true }
+privacy-python = { path = "vendor/privacy-python", editable = true }
 
 [tool.vulture]
 min_confidence = 80
@@ -94,3 +97,4 @@ pythonVersion = "3.9"
 typeCheckingMode = "standard"
 reportMissingImports = false
 reportMissingTypeStubs = false
+

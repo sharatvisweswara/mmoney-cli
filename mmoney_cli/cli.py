@@ -17,8 +17,15 @@ from typing import Any, NoReturn, TypeVar
 import click
 import keyring
 from monarchmoney import MonarchMoney
+from privacy import PrivacyClient  # type: ignore[attr-defined]
 
 from mmoney_cli.pretty import output_pretty
+from mmoney_cli.privacy import (
+    enrich_groups_from_privacy,
+    group_by_merchant,
+    parse_privacy_plaid_name,
+    scan_privacy_transactions,
+)
 
 T = TypeVar("T")
 
@@ -1521,6 +1528,328 @@ def rules_create(
             set_merchant_action=merchant,
             review_status_action=review_status,
             apply_to_existing_transactions=apply_to_existing,
+        )
+    )
+    errors = result.get("createTransactionRuleV2", {}).get("errors")
+    if errors:
+        click.echo(
+            json.dumps({"error": {"code": ErrorCode.API_ERROR, "message": str(errors)}}),
+            err=True,
+        )
+        raise SystemExit(ExitCode.API_ERROR)
+    output_result(result)
+
+
+# ============================================================================
+# Privacy Commands
+# ============================================================================
+
+
+@cli.group()
+def privacy():
+    """Privacy.com virtual card transaction triage."""
+    pass
+
+
+@privacy.command("auth")
+def privacy_auth():
+    """Store a Privacy.com API key in the macOS keychain."""
+    api_key = click.prompt("Privacy.com API key", hide_input=True)
+
+    # Verify the key works
+    try:
+        client = PrivacyClient(api_key=api_key)
+        client.check_status()
+    except Exception as e:
+        click.echo(
+            json.dumps({"error": {"code": ErrorCode.AUTH_FAILED, "message": str(e)}}),
+            err=True,
+        )
+        raise SystemExit(ExitCode.AUTH_ERROR) from None
+
+    if PrivacyClient.save_key_to_keychain(api_key):
+        click.echo(json.dumps({"status": "ok", "message": "Privacy.com API key saved to keychain"}))
+    else:
+        click.echo(
+            json.dumps(
+                {
+                    "error": {
+                        "code": ErrorCode.UNKNOWN_ERROR,
+                        "message": "Failed to save to keychain",
+                    }
+                }
+            ),
+            err=True,
+        )
+        raise SystemExit(ExitCode.GENERAL_ERROR)
+
+
+@privacy.command("scan")
+@click.option("--merchant-id", "-m", help="Privacy merchant ID (auto-detected from rules)")
+@click.option("--limit", "-l", default=500, type=int, help="Max transactions to fetch")
+@click.option("--window", "-w", default=5, type=int, help="Days +/- to search Privacy.com")
+def privacy_scan(merchant_id, limit, window):
+    """Scan unreviewed Privacy.com transactions and suggest rules."""
+    from datetime import datetime, timedelta
+
+    from mmoney_cli.privacy import match_amount_in_window
+
+    mm = get_client()
+
+    # Fetch rules first — needed for matching and to auto-detect merchant ID
+    rules_result = run_async(mm.get_transaction_rules())
+    rules = rules_result.get("transactionRules", [])
+
+    if not merchant_id:
+        for rule in rules:
+            merchant_action = rule.get("setMerchantAction")
+            if (
+                isinstance(merchant_action, dict)
+                and merchant_action.get("name", "").lower() == "privacy"
+            ):
+                merchant_id = merchant_action.get("id")
+                break
+
+    merchant_ids = [merchant_id] if merchant_id else []
+    txns_result = run_async(
+        mm.get_transactions(
+            limit=limit,
+            needs_review=True,
+            needs_review_unassigned=True,
+            merchant_ids=merchant_ids,
+        )
+    )
+    records = _extract_records(txns_result)
+
+    privacy_txns = [r for r in records if parse_privacy_plaid_name(r.get("plaidName"))]
+    if not privacy_txns:
+        click.echo("No unreviewed Privacy.com transactions found.")
+        return
+
+    try:
+        pc = PrivacyClient()
+    except ValueError:
+        click.echo(
+            json.dumps(
+                {
+                    "error": {
+                        "code": ErrorCode.AUTH_REQUIRED,
+                        "message": "Privacy.com API key not found",
+                        "details": "Run 'mmoney privacy auth' to store your API key.",
+                    }
+                }
+            ),
+            err=True,
+        )
+        raise SystemExit(ExitCode.AUTH_ERROR) from None
+
+    groups = group_by_merchant(privacy_txns)
+
+    def search_privacy(amount_cents: int, date_str: str) -> list[dict[str, Any]]:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        begin = (dt - timedelta(days=window)).strftime("%Y-%m-%dT00:00:00Z")
+        end = (dt + timedelta(days=window)).strftime("%Y-%m-%dT23:59:59Z")
+        p_txns = pc.get_all_transactions(begin=begin, end=end, result="APPROVED")
+        return match_amount_in_window(amount_cents, p_txns)
+
+    def get_card_info(card_token: str) -> dict[str, Any] | None:
+        try:
+            return pc.get_card(card_token)
+        except Exception:
+            return None
+
+    unmatched = enrich_groups_from_privacy(groups, search_privacy, get_card_info)
+    if unmatched:
+        names = ", ".join(g.canonical for g in unmatched)
+        click.echo(f"Warning: no Privacy.com match for: {names}", err=True)
+
+    results = scan_privacy_transactions(privacy_txns, rules, groups=groups)
+    output_result(results)
+
+
+@privacy.command("match")
+@click.argument("amount", type=float)
+@click.argument("date")
+@click.option("--window", "-w", default=3, type=int, help="Days before/after date to search")
+def privacy_match(amount, date, window):
+    """Find a Privacy.com transaction by amount and date.
+
+    AMOUNT is in dollars (e.g., 186.40). DATE is YYYY-MM-DD.
+    Searches +/- WINDOW days around the date to account for ACH settlement lag.
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        pc = PrivacyClient()
+    except ValueError:
+        click.echo(
+            json.dumps(
+                {
+                    "error": {
+                        "code": ErrorCode.AUTH_REQUIRED,
+                        "message": "Privacy.com API key not found",
+                        "details": "Run 'mmoney privacy auth' to store your API key.",
+                    }
+                }
+            ),
+            err=True,
+        )
+        raise SystemExit(ExitCode.AUTH_ERROR) from None
+
+    target_cents = abs(round(amount * 100))
+    try:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        click.echo(
+            json.dumps(
+                {
+                    "error": {
+                        "code": ErrorCode.VALIDATION_INVALID_VALUE,
+                        "message": f"Invalid date: {date}",
+                    }
+                }
+            ),
+            err=True,
+        )
+        raise SystemExit(ExitCode.VALIDATION_ERROR) from None
+
+    begin = (dt - timedelta(days=window)).strftime("%Y-%m-%dT00:00:00Z")
+    end = (dt + timedelta(days=window)).strftime("%Y-%m-%dT23:59:59Z")
+
+    click.echo(f"Searching Privacy.com: {target_cents}c within {date} +/- {window} days")
+    p_txns = pc.get_all_transactions(begin=begin, end=end, result="APPROVED")
+    click.echo(f"Fetched {len(p_txns)} transactions")
+
+    click.echo("All transactions in window:")
+    for pt in p_txns:
+        m = pt.get("merchant") or {}
+        p_settled = pt.get("settled_amount") or 0
+        p_auth = pt.get("authorization_amount") or 0
+        p_amt = pt.get("amount") or 0
+        click.echo(
+            f"  {(pt.get('created') or '')[:10]}  "
+            f"amt={p_amt}c  settled={p_settled}c  auth={p_auth}c  "
+            f"{m.get('descriptor', '?')}"
+        )
+
+    matches = []
+    for pt in p_txns:
+        p_cents = abs(pt.get("settled_amount") or pt.get("amount") or 0)
+        if p_cents == target_cents:
+            matches.append(pt)
+
+    if not matches:
+        click.echo(f"No transactions found for {target_cents}c in window")
+        raise SystemExit(ExitCode.NOT_FOUND)
+
+    for pt in matches:
+        merchant = pt.get("merchant") or {}
+        descriptor = merchant.get("descriptor", "?")
+        mcc = merchant.get("mcc", "?")
+        created = pt.get("created", "")
+        card_token = pt.get("card_token", "")
+        status = pt.get("status", "")
+        settled = pt.get("settled_amount", 0)
+
+        click.echo(f"\nMatch: {created}")
+        click.echo(f"  descriptor: {descriptor}")
+        click.echo(f"  mcc:        {mcc}")
+        click.echo(f"  status:     {status}")
+        click.echo(f"  settled:    {settled}c")
+        click.echo(f"  card:       {card_token}")
+
+        # Look up card memo
+        if card_token:
+            try:
+                card = pc.get_card(card_token)
+                memo = card.get("memo", "")
+                card_state = card.get("state", "")
+                click.echo(f"  card memo:  {memo}")
+                click.echo(f"  card state: {card_state}")
+            except Exception as e:
+                click.echo(f"  card error: {e}")
+
+
+@privacy.command("rule")
+@click.option("--statement", "-s", required=True, help="Merchant fragment (e.g., 'claude.ai s')")
+@click.option("--merchant", "-m", required=True, help="Merchant name to assign")
+@click.option("--category", "-c", help="Category name to assign")
+@click.option(
+    "--operator",
+    "-o",
+    type=click.Choice(["eq", "contains"]),
+    default="contains",
+    show_default=True,
+    help="Match operator",
+)
+@click.option(
+    "--no-apply-existing",
+    is_flag=True,
+    default=False,
+    help="Do NOT apply to existing transactions",
+)
+@click.option(
+    "--preview",
+    is_flag=True,
+    default=False,
+    help="Dry-run: show matching transactions without creating the rule",
+)
+@require_mutations
+def privacy_rule(statement, merchant, category, operator, no_apply_existing, preview):
+    """Create a transaction rule with Privacy.com defaults.
+
+    Statement is the merchant fragment only (e.g., "claude.ai s").
+    Automatically adds merchantNameCriteria eq "privacy", sets review
+    status to "reviewed", and applies to existing transactions.
+    """
+    mm = get_client()
+    stmt = statement.lower()
+
+    category_id = None
+    if category:
+        cats = run_async(mm.get_transaction_categories())
+        match = next(
+            (c for c in cats.get("categories", []) if c["name"].lower() == category.lower()),
+            None,
+        )
+        if match is None:
+            click.echo(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": ErrorCode.NOT_FOUND,
+                            "message": f"Category '{category}' not found",
+                            "details": "Run 'mmoney categories list' to see available categories.",
+                        }
+                    }
+                ),
+                err=True,
+            )
+            raise SystemExit(ExitCode.NOT_FOUND)
+        category_id = match["id"]
+
+    if preview:
+        result = run_async(
+            mm.preview_transaction_rule(
+                original_statement_value=stmt,
+                original_statement_operator=operator,
+                set_category_action=category_id,
+                set_merchant_action=merchant,
+                review_status_action="reviewed",
+            )
+        )
+        output_result(result)
+        return
+
+    result = run_async(
+        mm.create_transaction_rule(
+            original_statement_value=stmt,
+            original_statement_operator=operator,
+            set_category_action=category_id,
+            set_merchant_action=merchant,
+            review_status_action="reviewed",
+            apply_to_existing_transactions=not no_apply_existing,
+            merchant_name_value="privacy",
         )
     )
     errors = result.get("createTransactionRuleV2", {}).get("errors")
